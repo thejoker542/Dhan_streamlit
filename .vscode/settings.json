@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./DhanHQ-Ticker-py/src"
+    ]
+}
