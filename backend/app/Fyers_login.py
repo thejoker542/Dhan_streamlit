@@ -8,6 +8,7 @@ import requests
 from urllib.parse import parse_qs, urlparse
 import pandas as pd
 import base64
+import pytz
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -161,7 +162,10 @@ def get_historical_data(symbol, days_back=10):
         response = fyers.history(data=data)
         df = pd.DataFrame(response["candles"], 
                          columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df["date"] = pd.to_datetime(df["timestamp"], unit="s")
+        
+        # Convert UTC timestamp to IST timezone
+        ist = pytz.timezone('Asia/Kolkata')
+        df["date"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert(ist)
         df = df[["date", "open", "high", "low", "close", "volume"]]
         
         output_path = DATA_DIR / f"{symbol.replace(':', '_')}.csv"

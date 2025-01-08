@@ -4,6 +4,11 @@ import pandas as pd
 from pathlib import Path
 import logging
 import os
+import sys
+
+# Add parent directory to Python path for imports
+sys.path.append(str(Path(__file__).parent))
+from Fyers_login import get_historical_data
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +58,63 @@ async def get_master_data():
         return {"data": df.to_dict(orient="records")}
     except Exception as e:
         logger.error(f"Error reading master data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def get_pe_symbol(ce_symbol: str) -> str:
+    """Convert CE symbol to PE symbol"""
+    if ce_symbol.endswith('CE'):
+        return ce_symbol[:-2] + 'PE'
+    return ce_symbol
+
+def format_fyers_symbol(symbol: str) -> str:
+    """Convert simple symbol to Fyers format"""
+    if not symbol.startswith('NSE:'):
+        return f"NSE:{symbol}"
+    return symbol
+
+@app.get("/historical-straddle/{symbol}")
+async def get_historical_straddle(symbol: str, days_back: int = 10):
+    try:
+        # Format symbol to Fyers format
+        formatted_symbol = format_fyers_symbol(symbol)
+        logger.info(f"Converting {symbol} to {formatted_symbol}")
+        
+        # Get CE data
+        ce_df = get_historical_data(formatted_symbol, days_back)
+        
+        # Get PE data
+        pe_symbol = get_pe_symbol(formatted_symbol)
+        pe_df = get_historical_data(pe_symbol, days_back)
+        
+        # Handle duplicate timestamps by taking the latest value
+        ce_df = ce_df.sort_values('date').groupby('date', as_index=False).last()
+        pe_df = pe_df.sort_values('date').groupby('date', as_index=False).last()
+        
+        # Merge CE and PE data on date
+        combined_df = pd.merge(
+            ce_df[['date', 'close']].rename(columns={'close': 'ce_price'}),
+            pe_df[['date', 'close']].rename(columns={'close': 'pe_price'}),
+            on='date',
+            how='inner'
+        )
+        
+        # Calculate straddle price
+        combined_df['straddle_price'] = combined_df['ce_price'] + combined_df['pe_price']
+        
+        # Save to CSV using original symbol name
+        output_path = DATA_DIR / f"straddle_{symbol}.csv"
+        combined_df.to_csv(output_path, index=False)
+        logger.info(f"Straddle data saved to {output_path}")
+        
+        return {
+            "original_symbol": symbol,
+            "formatted_symbol": formatted_symbol,
+            "pe_symbol": pe_symbol,
+            "data": combined_df.to_dict(orient="records")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating straddle: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
