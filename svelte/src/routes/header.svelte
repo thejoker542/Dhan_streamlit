@@ -1,98 +1,143 @@
 <script lang="ts">
-    import * as Select from "$lib/components/ui/select";
+    import { onMount } from 'svelte';
+    import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "$lib/components/ui/select";
     import { Button } from "$lib/components/ui/button";
-  
-    const indexOptions = [
-        { value: "NIFTY", label: "NIFTY" },
-        { value: "BANKNIFTY", label: "BANKNIFTY" },
-        { value: "SENSEX", label: "SENSEX" },
-        { value: "BANKEX", label: "BANKEX" },
-        { value: "MIDCAPNIFTY", label: "MIDCAPNIFTY" },
-    ];
+    import { createEventDispatcher } from 'svelte';
     
-    // Example expiry dates (you should fetch these dynamically based on selected index)
-    const expiryOptions = [
-        { value: "2024-01-25", label: "25 Jan 2024" },
-        { value: "2024-02-01", label: "01 Feb 2024" },
-        { value: "2024-02-08", label: "08 Feb 2024" },
-    ];
-    
-    // Example strike prices (should be fetched based on selected index and expiry)
-    const strikeOptions = [
-        { value: "19500", label: "19500" },
-        { value: "19600", label: "19600" },
-        { value: "19700", label: "19700" },
-    ];
-    
-    let selectedIndex: string | null = null;
-    let selectedExpiry: string | null = null;
-    let selectedStrike: string | null = null;
+    const dispatch = createEventDispatcher();
+    const indices = ['NIFTY', 'BANKNIFTY', 'MIDCAPNIFTY', 'SENSEX', 'BANKEX'];
 
-    function handleSelect(value: string | null, selectType: 'index'|'expiry'|'strike') {
-        if (selectType === 'index') {
-            selectedIndex = value;
-            // Reset dependent selections
-            selectedExpiry = null;
-            selectedStrike = null;
-            // Here you would typically fetch new expiry dates
-        }
-        if (selectType === 'expiry') {
-            selectedExpiry = value;
-            selectedStrike = null;
-            // Here you would typically fetch new strike prices
-        }
-        if (selectType === 'strike') {
-            selectedStrike = value;
+    // State management
+    let masterData = $state([]);
+    let lastQuotes = $state({
+        NIFTY: 19500,
+        BANKNIFTY: 44000,
+        MIDCAPNIFTY: 8000,
+        SENSEX: 65000,
+        BANKEX: 44500
+    });
+    
+    let selectedIndex = $state('NIFTY');
+    let selectedExpiry = $state('');
+    let selectedStrike = $state(0);
+
+    // Computed values
+    let expiryDates = $derived(() => {
+        if (!masterData.length) return [];
+        return [...new Set(
+            masterData
+                .filter(row => row.exSymbol === selectedIndex)
+                .map(row => row.expiryDate)
+        )].sort((a, b) => new Date(b) - new Date(a));
+    });
+
+    let availableStrikes = $derived(() => {
+        if (!masterData.length || !selectedExpiry) return [];
+        return [...new Set(
+            masterData
+                .filter(row => 
+                    row.exSymbol === selectedIndex && 
+                    row.expiryDate === selectedExpiry
+                )
+                .map(row => Number(row.strikePrice))
+        )].sort((a, b) => a - b);
+    });
+
+    let visibleStrikes = $derived(() => {
+        if (!availableStrikes.length) return [];
+        const currentPrice = lastQuotes[selectedIndex];
+        const closestStrike = findClosestStrike(currentPrice);
+        const strikeIndex = availableStrikes.indexOf(closestStrike);
+        
+        // Get 5 strikes below and 5 above
+        const start = Math.max(0, strikeIndex - 5);
+        const end = Math.min(availableStrikes.length, strikeIndex + 6);
+        return availableStrikes.slice(start, end);
+    });
+
+    function findClosestStrike(price: number) {
+        return availableStrikes.reduce((prev, curr) => 
+            Math.abs(curr - price) < Math.abs(prev - price) ? curr : prev
+        );
+    }
+
+    async function fetchLatestQuotes() {
+        try {
+            const response = await fetch('/api/quotes');
+            const quotes = await response.json();
+            lastQuotes = quotes;
+        } catch (error) {
+            console.error('Error fetching quotes:', error);
+            // Keep using last saved quotes
         }
     }
+
+    onMount(async () => {
+        try {
+            // Load master file data
+            const response = await fetch('/backend/data/master_file.csv');
+            const text = await response.text();
+            masterData = text.split('\n').slice(1).map(row => {
+                const [symbol, exSymbol, segment, exchange, expiryDate, strikePrice, exSymName] = row.split(',');
+                return { symbol, exSymbol, segment, exchange, expiryDate, strikePrice: Number(strikePrice), exSymName };
+            });
+
+            // Fetch latest quotes
+            await fetchLatestQuotes();
+
+            // Set defaults
+            selectedExpiry = expiryDates[0]; // Latest expiry
+            selectedStrike = findClosestStrike(lastQuotes[selectedIndex]); // Closest strike to current price
+
+            // Trigger initial chart
+            handleChartClick();
+        } catch (error) {
+            console.error('Error in initialization:', error);
+        }
+    });
 
     function handleChartClick() {
-        if (selectedIndex && selectedExpiry && selectedStrike) {
-            console.log('Generating chart for:', { selectedIndex, selectedExpiry, selectedStrike });
-            // Add your chart generation logic here
-        }
+        dispatch('chartClick', {
+            index: selectedIndex,
+            expiry: selectedExpiry,
+            strike: selectedStrike
+        });
     }
 </script>
-  
-<header class="bg-gray-100 p-4 flex items-center space-x-4 shadow-md">
-    <Select.Root value={selectedIndex} onValueChange={(e)=>handleSelect(e.detail.value,'index')}>
-        <Select.Trigger class="w-[180px] border border-gray-300 rounded p-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring focus:ring-blue-200">
-            <Select.Value placeholder="Select Index" />
-        </Select.Trigger>
-        <Select.Content class="bg-white border border-gray-300 rounded shadow-md">
-            {#each indexOptions as option}
-                <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
-        </Select.Content>
-    </Select.Root>
-  
-    <Select.Root value={selectedExpiry} onValueChange={(e)=>handleSelect(e.detail.value,'expiry')}>
-        <Select.Trigger class="w-[180px] border border-gray-300 rounded p-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring focus:ring-blue-200" disabled={!selectedIndex}>
-            <Select.Value placeholder="Select Expiry" />
-        </Select.Trigger>
-        <Select.Content class="bg-white border border-gray-300 rounded shadow-md">
-            {#each expiryOptions as option}
-                <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
-        </Select.Content>
-    </Select.Root>
-  
-    <Select.Root value={selectedStrike} onValueChange={(e)=>handleSelect(e.detail.value,'strike')}>
-        <Select.Trigger class="w-[180px] border border-gray-300 rounded p-2 bg-white hover:bg-gray-50 focus:outline-none focus:ring focus:ring-blue-200" disabled={!selectedExpiry}>
-            <Select.Value placeholder="Select Strike" />
-        </Select.Trigger>
-        <Select.Content class="bg-white border border-gray-300 rounded shadow-md">
-            {#each strikeOptions as option}
-                <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
-        </Select.Content>
-    </Select.Root>
 
-    <Button 
-        disabled={!selectedIndex || !selectedExpiry || !selectedStrike}
-        on:click={handleChartClick}
-        variant="default"
-    >
-        Chart
-    </Button>
-</header>
+<div class="flex items-center gap-4 p-4 bg-background border-b">
+    <Select value={selectedIndex} onValueChange={(value) => selectedIndex = value}>
+        <SelectTrigger class="w-[180px]">
+            <SelectValue placeholder="Select Index" />
+        </SelectTrigger>
+        <SelectContent>
+            {#each indices as index}
+                <SelectItem value={index}>{index}</SelectItem>
+            {/each}
+        </SelectContent>
+    </Select>
+
+    <Select value={selectedExpiry} onValueChange={(value) => selectedExpiry = value}>
+        <SelectTrigger class="w-[180px]">
+            <SelectValue placeholder="Select Expiry" />
+        </SelectTrigger>
+        <SelectContent>
+            {#each expiryDates as date}
+                <SelectItem value={date}>{date}</SelectItem>
+            {/each}
+        </SelectContent>
+    </Select>
+
+    <Select value={selectedStrike} onValueChange={(value) => selectedStrike = value}>
+        <SelectTrigger class="w-[180px]">
+            <SelectValue placeholder="Select Strike" />
+        </SelectTrigger>
+        <SelectContent>
+            {#each visibleStrikes as strike}
+                <SelectItem value={strike}>{strike}</SelectItem>
+            {/each}
+        </SelectContent>
+    </Select>
+
+    <Button on:click={handleChartClick}>Show Chart</Button>
+</div>

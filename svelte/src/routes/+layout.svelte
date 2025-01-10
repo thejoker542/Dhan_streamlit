@@ -1,12 +1,18 @@
 <script lang="ts">
-  import "../app.pcss";  // This is correct since you're using PostCSS
-  import Navigation from '$lib/components/Navigation.svelte';
+  import "../app.pcss";
+  import { onMount } from 'svelte';
+  import { marketStore } from '$lib/stores/marketStore';
+
+  onMount(() => {
+    marketStore.loadData();
+    
+    // Check for updates every 5 minutes
+    const interval = setInterval(() => marketStore.loadData(), 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  });
 </script>
 
 <div class="min-h-screen bg-background">
-  <Navigation />
-  <main class="container mx-auto p-4">
-    <slot />
-  </main>
+  <slot />
 </div>
 

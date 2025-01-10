@@ -3,8 +3,7 @@
     import { Button } from './ui/button';
     
     const navItems = [
-        { href: '/', label: 'ApexCharts' },
-        { href: '/chartjs', label: 'Chart.js' }
+        { href: '/', label: 'Charts' }
     ];
 </script>
 
