@@ -2,11 +2,12 @@
     import * as Select from "$lib/components/ui/select";
     import { Button } from "$lib/components/ui/button";
     import { marketStore } from '$lib/stores/marketStore';
-    
-    let selectedIndex: string | null = null;
+    import { onMount } from 'svelte';
+
+    let selectedIndex: string | null = 'NIFTY'; // Default to NIFTY
     let selectedExpiry: string | null = null;
     let selectedStrike: string | null = null;
-    
+
     // Use derived store values
     $: indices = $marketStore.indices;
     $: expiryOptions = selectedIndex ? 
@@ -36,12 +37,18 @@
             // Reset dependent selections
             selectedExpiry = null;
             selectedStrike = null;
-            // Here you would typically fetch new expiry dates
+            // Fetch new expiry dates
+            if (value) {
+                $marketStore.fetchExpiryDates(value);
+            }
         }
         if (selectType === 'expiry') {
             selectedExpiry = value;
             selectedStrike = null;
-            // Here you would typically fetch new strike prices
+            // Fetch new strike prices
+            if (value && selectedIndex) {
+                $marketStore.fetchStrikes(selectedIndex, value);
+            }
         }
         if (selectType === 'strike') {
             selectedStrike = value;
@@ -54,6 +61,32 @@
             // Add your chart generation logic here
         }
     }
+
+    onMount(async () => {
+        // Fetch initial data
+        await $marketStore.fetchIndices();
+        await $marketStore.fetchExpiryDates(selectedIndex);
+        if (selectedIndex) {
+            const expiryDates = $marketStore.expiryDates(selectedIndex);
+            if (expiryDates.length > 0) {
+                selectedExpiry = expiryDates[0]; // Default to the nearest expiry date
+                await $marketStore.fetchStrikes(selectedIndex, selectedExpiry);
+                const strikes = $marketStore.strikes(selectedIndex, selectedExpiry);
+                if (strikes.length > 0) {
+                    // Default to the strike price closest to the quote price
+                    const quote = $marketStore.quotes[selectedIndex];
+                    if (quote) {
+                        const closestStrike = strikes.reduce((prev, curr) => {
+                            return (Math.abs(curr - quote.last) < Math.abs(prev - quote.last) ? curr : prev);
+                        });
+                        selectedStrike = closestStrike.toString();
+                    }
+                }
+            }
+        }
+        // Automatically click the chart button to generate the initial chart
+        handleChartClick();
+    });
 </script>
   
 <header class="bg-gray-100 p-4 flex items-center space-x-4 shadow-md">
