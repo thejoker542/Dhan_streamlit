@@ -1,45 +1,62 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
+import type { MarketData, QuoteMap } from '$lib/types/market';
 
-export const masterData = writable<any[]>([]);
-export const quotes = writable<Record<string, any>>({});
-export const lastUpdate = writable<Date | null>(null);
-export const isLoading = writable(false);
+interface MarketStore {
+    masterData: MarketData[];
+    quotes: QuoteMap;
+    lastUpdate: Date | null;
+    isLoading: boolean;
+}
+
+const initialState: MarketStore = {
+    masterData: [],
+    quotes: {},
+    lastUpdate: null,
+    isLoading: false
+};
+
+export const marketStore = writable<MarketStore>(initialState);
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'BANKEX', 'MIDCAPNIFTY'];
 
 export async function loadMarketData() {
+    const { isLoading, lastUpdate } = get(marketStore);
     const now = new Date();
-    const lastUpdateTime = get(lastUpdate);
     
-    // Check if reload is needed:
-    // 1. If no last update
-    // 2. If it's past 8:30 AM IST and last update was > 10 hours ago
-    const needsReload = !lastUpdateTime || (
-        now.getHours() >= 8 && now.getMinutes() >= 30 && 
-        (now.getTime() - lastUpdateTime.getTime()) > 10 * 60 * 60 * 1000
-    );
+    // Don't reload if already loading or if last update was recent
+    if (isLoading || (lastUpdate && (now.getTime() - lastUpdate.getTime()) < 10000)) {
+        return;
+    }
 
-    if (needsReload) {
-        isLoading.set(true);
-        try {
-            // Load master file
-            const masterResponse = await fetch('/api/master-data');
-            const masterJson = await masterResponse.json();
-            masterData.set(masterJson);
+    marketStore.update(state => ({ ...state, isLoading: true }));
 
-            // Load quotes for each index
-            const quotesData: Record<string, any> = {};
-            await Promise.all(INDICES.map(async (index) => {
+    try {
+        // Load master data
+        const masterResponse = await fetch('/api/master-data');
+        const masterData = await masterResponse.json();
+
+        // Load quotes for each index
+        const quotesData: QuoteMap = {};
+        await Promise.all(INDICES.map(async (index) => {
+            try {
                 const quoteResponse = await fetch(`/api/quote/${index}`);
+                if (!quoteResponse.ok) throw new Error(`Failed to fetch quote for ${index}`);
                 quotesData[index] = await quoteResponse.json();
-            }));
-            quotes.set(quotesData);
+            } catch (error) {
+                console.error(`Error loading quote for ${index}:`, error);
+                quotesData[index] = { last: 0, change: 0, volume: 0, timestamp: now.toISOString() };
+            }
+        }));
 
-            lastUpdate.set(now);
-        } catch (error) {
-            console.error('Failed to load market data:', error);
-        } finally {
-            isLoading.set(false);
-        }
+        marketStore.update(state => ({
+            ...state,
+            masterData,
+            quotes: quotesData,
+            lastUpdate: now,
+            isLoading: false
+        }));
+    } catch (error) {
+        console.error('Failed to load market data:', error);
+        marketStore.update(state => ({ ...state, isLoading: false }));
     }
 }

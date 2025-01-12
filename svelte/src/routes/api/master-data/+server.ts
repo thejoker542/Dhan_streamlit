@@ -1,8 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { parse } from 'csv-parse/sync';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { MarketData } from '$lib/types/market';
 
 export const GET: RequestHandler = async () => {
@@ -12,7 +12,7 @@ export const GET: RequestHandler = async () => {
         
         // Parse CSV with headers matching your format
         const rawRecords = parse(fileContent, {
-            columns: ['symbol', 'exSymbol', 'symbol2', 'exSymbol2', 'segment', 
+            columns: ['symbol', 'exSymbol', 'segment', 
                      'exchange', 'expiryDate', 'strikePrice', 'exSymName'],
             skip_empty_lines: true,
             trim: true

@@ -114,12 +114,22 @@
         };
     });
 
-    async function handleHeaderChartClick(event: CustomEvent) {
-        const { index, expiry, strike } = event.detail;
+    async function handleHeaderChartClick(event: CustomEvent<{index?: string; expiry?: string; strike?: string}>) {
+        const { index = 'NIFTY' } = event.detail || {}; // Provide default value
+        
         try {
             // Fetch historical data for the selected combination
-            const response = await fetch(`/api/historical-data?index=${index}&expiry=${expiry}&strike=${strike}`);
+            const response = await fetch(`/api/historical-data?index=${index}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
             const data = await response.json();
+            
+            // Handle empty data case
+            if (!data || !data.length) {
+                console.warn('No data received');
+                return;
+            }
             
             // Update chart data
             chartData = data.map(row => [
@@ -159,6 +169,6 @@
             </Button>
         </div>
         
-        <div bind:this={chartDiv} class="w-full h-[600px]" />
+        <div bind:this={chartDiv} class="w-full h-[600px]"></div>
     </div>
 </div>
