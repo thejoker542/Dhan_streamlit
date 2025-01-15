@@ -60,6 +60,20 @@ async def get_master_data():
         logger.error(f"Error reading master data: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/master-data/{exSymbol}")
+async def get_master_data_exSymbol(exSymbol: str):
+    try:
+        csv_path = DATA_DIR / "master_file.csv"
+        if not csv_path.exists():
+            raise HTTPException(status_code=404, detail="Master file not found")
+        df = pd.read_csv(csv_path)
+        df = df[df['exSymbol'] == exSymbol]
+        return {"data": df.to_dict(orient="records")}
+    except Exception as e:
+        logger.error(f"Error reading master data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 def get_pe_symbol(ce_symbol: str) -> str:
     """Convert CE symbol to PE symbol"""
     if ce_symbol.endswith('CE'):

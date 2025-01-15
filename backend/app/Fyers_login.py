@@ -121,7 +121,7 @@ def download_master_instruments():
             
             columns_to_keep = ['symbol', 'exSymbol', 'segment', 'exchange', 'expiryDate', 'strikePrice', 'exSymName']
             df = df[columns_to_keep]
-            df = df[df['exSymbol'].isin(['NIFTY', 'BANKNIFTY', 'SENSEX', 'BANKEX', 'MIDCAP'])]
+            df = df[df['exSymbol'].isin(['NIFTY', 'BANKNIFTY', 'SENSEX', 'BANKEX'])]
             
             # Add logging to check dates
             logger.info(f"Sample raw expiry dates: {df['expiryDate'].head()}")
@@ -180,5 +180,10 @@ def get_historical_data(symbol, days_back=10):
 
 if __name__ == "__main__":
     access_token = get_access_token()
-    download_master_instruments()
-    get_historical_data("NSE:NIFTY2510923450CE")
+    fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=access_token)
+    # Get current market price
+    symbol_data = {"symbols": f"NSE:{"NIFTY50"}-INDEX"}  
+    quote_response = fyers.quotes(data=symbol_data)
+    print(quote_response)
+    # download_master_instruments()
+    # get_historical_data("NSE:NIFTY2510923450CE")

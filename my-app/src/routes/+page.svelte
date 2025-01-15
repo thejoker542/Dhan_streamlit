@@ -3,39 +3,57 @@
   import StraddleChart from '../components/StraddleChart.svelte';
   import { onMount, onDestroy } from 'svelte';
 
-  interface OHLCData {
+  type OHLCData = {
     timestamp: string;
     open: number;
     high: number;
     low: number;
     close: number;
-  }
+  };
 
-  let ceData: OHLCData[] = [];
-  let peData: OHLCData[] = [];
-  let straddleData: OHLCData[] = [];
+  type TickData = {
+    timestamp: string;
+    ltp: number;
+  };
 
-  let liveCeData: { [key: string]: { open: number | null, high: number | null, low: number | null, close: number | null, volume: number } } = {};
-  let livePeData: { [key: string]: { open: number | null, high: number | null, low: number | null, close: number | null, volume: number } } = {};
+  let ceData = $state<OHLCData[]>([]);
+  let peData = $state<OHLCData[]>([]);
+  let straddleData = $state<OHLCData[]>([]);
 
-  let selectedTimeframe = 5; // Default timeframe
-  let rawCeData: { timestamp: string; ltp: number }[] = [];
-  let rawPeData: { timestamp: string; ltp: number }[] = [];
+  let rawCeData = $state<TickData[]>([]);
+  let rawPeData = $state<TickData[]>([]);
+  let selectedTimeframe = $state<number>(5);
+
+  let websocket: WebSocket | null = null;
+  let ceSymbol = $state<string>('');
+  let peSymbol = $state<string>('');
 
   async function fetchHistoricalData(ceSymbol: string, peSymbol: string) {
-    const days = 10;
-    const baseUrl = 'http://localhost:8000'; // Assuming FastAPI is running on port 8000
-
     try {
-      const ceResponse = await fetch(`${baseUrl}/history/${ceSymbol}/${days}`);
-      const historicalCeData = await ceResponse.json() as OHLCData[];
-      ceData = historicalCeData;
+      const [ceResponse, peResponse] = await Promise.all([
+        fetch(`http://localhost:8000/history/${ceSymbol}`),
+        fetch(`http://localhost:8000/history/${peSymbol}`)
+      ]);
 
-      const peResponse = await fetch(`${baseUrl}/history/${peSymbol}/${days}`);
-      const historicalPeData = await peResponse.json() as OHLCData[];
+      const historicalCeData = await ceResponse.json();
+      const historicalPeData = await peResponse.json();
+
+      ceData = historicalCeData;
       peData = historicalPeData;
 
       calculateStraddleData();
+      
+      // Clear raw data when loading new symbols
+      rawCeData = [];
+      rawPeData = [];
+      
+      // Update WebSocket subscription
+      if (websocket?.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({
+          action: 'subscribe',
+          symbols: [ceSymbol, peSymbol]
+        }));
+      }
     } catch (error) {
       console.error('Error fetching historical data:', error);
     }
@@ -50,91 +68,78 @@
         low: ce.low + peData[index].low,
         close: ce.close + peData[index].close,
       }));
-    } else {
-      console.error('CE and PE data lengths do not match');
     }
   }
 
   function handleChartButtonClick(event: CustomEvent<{ exSymbol: string, expiryDate: string, strikePrice: number }>) {
     const { exSymbol, expiryDate, strikePrice } = event.detail;
     const formattedExpiryDate = expiryDate.split('-').join('').slice(2);
-    const ceSymbol = `NSE:${exSymbol}${formattedExpiryDate}${strikePrice}CE`;
-    const peSymbol = `NSE:${exSymbol}${formattedExpiryDate}${strikePrice}PE`;
+    ceSymbol = `NSE:${exSymbol}${formattedExpiryDate}${strikePrice}CE`;
+    peSymbol = `NSE:${exSymbol}${formattedExpiryDate}${strikePrice}PE`;
     fetchHistoricalData(ceSymbol, peSymbol);
   }
 
   function updateLiveData(symbol: string, timestamp: string, ltp: number) {
-    if (symbol.endsWith('CE')) {
+    if (symbol === ceSymbol) {
       rawCeData = [...rawCeData, { timestamp, ltp }];
-    } else if (symbol.endsWith('PE')) {
+    } else if (symbol === peSymbol) {
       rawPeData = [...rawPeData, { timestamp, ltp }];
     }
     resampleData();
   }
 
   function resampleData() {
-    const interval = selectedTimeframe * 60 * 1000;
+    const interval = selectedTimeframe * 60 * 1000; // Convert minutes to milliseconds
 
-    const resampledCeData: OHLCData[] = [];
-    const resampledPeData: OHLCData[] = [];
+    function resampleSymbolData(rawData: TickData[]): OHLCData[] {
+      if (rawData.length === 0) return [];
 
-    if (rawCeData.length > 0) {
-      let currentIntervalStart = Math.floor(new Date(rawCeData[0].timestamp).getTime() / interval) * interval;
-      let currentBatch: { timestamp: string; ltp: number }[] = [];
-      for (const item of rawCeData) {
-        const itemTime = new Date(item.timestamp).getTime();
-        if (itemTime >= currentIntervalStart && itemTime < currentIntervalStart + interval) {
-          currentBatch.push(item);
+      const resampled: OHLCData[] = [];
+      let currentIntervalStart = Math.floor(new Date(rawData[0].timestamp).getTime() / interval) * interval;
+      let currentBatch: TickData[] = [];
+
+      for (const tick of rawData) {
+        const tickTime = new Date(tick.timestamp).getTime();
+        if (tickTime >= currentIntervalStart && tickTime < currentIntervalStart + interval) {
+          currentBatch.push(tick);
         } else {
           if (currentBatch.length > 0) {
-            resampledCeData.push(calculateOHLC(currentBatch, new Date(currentIntervalStart).toISOString()));
+            resampled.push(calculateOHLC(currentBatch, new Date(currentIntervalStart).toISOString()));
           }
-          currentIntervalStart = Math.floor(itemTime / interval) * interval;
-          currentBatch = [item];
+          currentIntervalStart = Math.floor(tickTime / interval) * interval;
+          currentBatch = [tick];
         }
       }
+
       if (currentBatch.length > 0) {
-        resampledCeData.push(calculateOHLC(currentBatch, new Date(currentIntervalStart).toISOString()));
+        resampled.push(calculateOHLC(currentBatch, new Date(currentIntervalStart).toISOString()));
       }
+
+      return resampled;
     }
 
-    if (rawPeData.length > 0) {
-      let currentIntervalStart = Math.floor(new Date(rawPeData[0].timestamp).getTime() / interval) * interval;
-      let currentBatch: { timestamp: string; ltp: number }[] = [];
-      for (const item of rawPeData) {
-        const itemTime = new Date(item.timestamp).getTime();
-        if (itemTime >= currentIntervalStart && itemTime < currentIntervalStart + interval) {
-          currentBatch.push(item);
-        } else {
-          if (currentBatch.length > 0) {
-            resampledPeData.push(calculateOHLC(currentBatch, new Date(currentIntervalStart).toISOString()));
-          }
-          currentIntervalStart = Math.floor(itemTime / interval) * interval;
-          currentBatch = [item];
-        }
-      }
-      if (currentBatch.length > 0) {
-        resampledPeData.push(calculateOHLC(currentBatch, new Date(currentIntervalStart).toISOString()));
-      }
+    const resampledCeData = resampleSymbolData(rawCeData);
+    const resampledPeData = resampleSymbolData(rawPeData);
+
+    if (resampledCeData.length > 0) {
+      ceData = [...ceData, ...resampledCeData];
+    }
+    if (resampledPeData.length > 0) {
+      peData = [...peData, ...resampledPeData];
     }
 
-    ceData = resampledCeData;
-    peData = resampledPeData;
     calculateStraddleData();
   }
 
-  
-
-  function calculateOHLC(data: { timestamp: string; ltp: number }[], intervalStart: string): OHLCData {
-    const open = data[0].ltp;
-    let high = data[0].ltp;
-    let low = data[0].ltp;
-    const close = data[data.length - 1].ltp;
-    for (const item of data) {
-      high = Math.max(high, item.ltp);
-      low = Math.min(low, item.ltp);
-    }
-    return { timestamp: intervalStart, open, high, low, close };
+  function calculateOHLC(data: TickData[], intervalStart: string): OHLCData {
+    const prices = data.map(d => d.ltp);
+    return {
+      timestamp: intervalStart,
+      open: prices[0],
+      high: Math.max(...prices),
+      low: Math.min(...prices),
+      close: prices[prices.length - 1]
+    };
   }
 
   function handleTimeframeChange(event: CustomEvent<{ timeframe: number }>) {
@@ -142,47 +147,77 @@
     resampleData();
   }
 
-  let websocket: WebSocket;
+  function isMarketHours(): boolean {
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const currentTime = hours * 100 + minutes;  // Convert to HHMM format
+    
+    // Check if it's a weekday (0 = Sunday, 6 = Saturday)
+    const isWeekday = now.getDay() > 0 && now.getDay() < 6;
+    
+    // Check if time is between 9:00 AM (0900) and 4:00 PM (1600)
+    const isDuringMarketHours = currentTime >= 900 && currentTime <= 1600;
+    
+    return isWeekday && isDuringMarketHours;
+  }
 
   onMount(() => {
-    websocket = new WebSocket('ws://localhost:8000/market_data');
+    if (isMarketHours()) {
+      websocket = new WebSocket('ws://localhost:8000/market_data');
 
-    websocket.onopen = () => {
-      console.log('WebSocket connection opened');
-    };
+      websocket.onopen = () => {
+        console.log('WebSocket connection opened during market hours');
+        if (ceSymbol && peSymbol && websocket) {
+          websocket.send(JSON.stringify({
+            action: 'subscribe',
+            symbols: [ceSymbol, peSymbol]
+          }));
+        }
+      };
 
-    websocket.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message && message.timestamp && message.symbol && message.ltp) {
-        updateLiveData(message.symbol, message.timestamp, message.ltp);
-      }
-    };
+      websocket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message && message.timestamp && message.symbol && message.ltp) {
+          updateLiveData(message.symbol, message.timestamp, message.ltp);
+        }
+      };
 
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+      websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
 
-    websocket.onclose = () => {
-      console.log('WebSocket connection closed');
-    };
+      websocket.onclose = () => {
+        console.log('WebSocket connection closed');
+      };
+    } else {
+      console.log('Outside market hours - WebSocket connection not initialized');
+    }
   });
 
   onDestroy(() => {
-    if (websocket) {
+    if (websocket?.readyState === WebSocket.OPEN) {
       websocket.close();
     }
   });
 </script>
 
-<main>
-  <HeaderSelection on:chartButtonClick={handleChartButtonClick} on:timeframeChange={handleTimeframeChange} />
-  <StraddleChart straddleData={straddleData} ceData={ceData} peData={peData} />
+<main class="container mx-auto px-4 py-8">
+  <HeaderSelection 
+    on:chartButtonClick={handleChartButtonClick} 
+    on:timeframeChange={handleTimeframeChange} 
+  />
+  <div class="mt-8">
+    <StraddleChart 
+      straddleData={straddleData} 
+      ceData={ceData} 
+      peData={peData} 
+    />
+  </div>
 </main>
 
 <style>
-  main {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+  :global(html) {
+    background-color: #f9fafb;
   }
 </style>
