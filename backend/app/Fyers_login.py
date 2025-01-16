@@ -31,8 +31,57 @@ def getEncodedString(string):
     base64_bytes = base64.b64encode(string.encode("ascii"))
     return base64_bytes.decode("ascii")
 
+def is_token_valid():
+    """Check if the current access token is valid"""
+    try:
+        token_path = DATA_DIR / "access_token.txt"
+        if not token_path.exists():
+            logger.info("No access token file found")
+            return False
+            
+        with open(token_path, 'r') as f:
+            access_token = f.read().strip()
+            
+        if not access_token:
+            logger.info("Empty access token")
+            return False
+            
+        # Initialize Fyers model with the token
+        fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=access_token)
+        
+        # Try to get profile data to check token validity
+        profile_response = fyers.get_profile()
+        
+        if profile_response.get('code') == 200:
+            logger.info("Access token is valid")
+            return True
+            
+        logger.info(f"Token validation failed: {profile_response}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error validating token: {str(e)}")
+        return False
+
+def ensure_valid_token():
+    """Ensure there is a valid access token, generate new one if needed"""
+    try:
+        if is_token_valid():
+            logger.info("Using existing valid token")
+            with open(DATA_DIR / "access_token.txt", 'r') as f:
+                return f.read().strip()
+        
+        logger.info("Getting new access token")
+        return get_access_token()
+        
+    except Exception as e:
+        logger.error(f"Error ensuring valid token: {str(e)}")
+        raise
+
 def get_access_token():
     try:
+        logger.info("Starting access token generation process")
+        
         # Send login OTP
         url_send_login_otp = "https://api-t2.fyers.in/vagator/v2/send_login_otp_v2"
         res = requests.post(url=url_send_login_otp, 
@@ -121,7 +170,7 @@ def download_master_instruments():
             
             columns_to_keep = ['symbol', 'exSymbol', 'segment', 'exchange', 'expiryDate', 'strikePrice', 'exSymName']
             df = df[columns_to_keep]
-            df = df[df['exSymbol'].isin(['NIFTY', 'BANKNIFTY', 'SENSEX', 'BANKEX'])]
+            df = df[df['exSymbol'].isin(['NIFTY', 'BANKNIFTY','MIDCPNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX'])]
             
             # Add logging to check dates
             logger.info(f"Sample raw expiry dates: {df['expiryDate'].head()}")
@@ -179,11 +228,19 @@ def get_historical_data(symbol, days_back=10):
         raise
 
 if __name__ == "__main__":
-    access_token = get_access_token()
-    fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=access_token)
-    # Get current market price
-    symbol_data = {"symbols": f"NSE:{"NIFTY50"}-INDEX"}  
-    quote_response = fyers.quotes(data=symbol_data)
-    print(quote_response)
-    # download_master_instruments()
-    # get_historical_data("NSE:NIFTY2510923450CE")
+    try:
+        # Ensure we have a valid token
+        access_token = ensure_valid_token()
+        
+        # Test the token with a simple API call
+        fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=access_token)
+        # symbol_data = {"symbols": "NSE:NIFTY50-INDEX"}
+        # quote_response = fyers.quotes(data=symbol_data)
+        # print("Quote response:", quote_response)
+        
+        # Optionally download master instruments
+        download_master_instruments()
+        
+    except Exception as e:
+        logger.error(f"Error in main: {str(e)}")
+        raise

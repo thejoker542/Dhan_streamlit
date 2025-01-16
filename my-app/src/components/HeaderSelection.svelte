@@ -45,7 +45,7 @@
       const response = await fetch(`http://localhost:8000/master-data/${selectedExSymbol}`);
       const data = await response.json();
       expiryDates = data.expiry_dates;
-      strikePrices = data.strike_prices;
+      strikePrices = data.strikePrices;
       defaultStrike = data.default_strike;
       
       // Set defaults
